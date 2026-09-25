@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Daily Routine Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+            color: #1f2937;
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* Custom Checkbox Styling */
+        .checkbox-custom {
+            appearance: none;
+            background-color: #fff;
+            margin: 0;
+            font: inherit;
+            color: currentColor;
+            width: 1.5em;
+            height: 1.5em;
+            border: 2px solid #cbd5e1;
+            border-radius: 0.35em;
+            display: grid;
+            place-content: center;
+            transition: all 0.2s ease-in-out;
+            cursor: pointer;
+        }
+        .checkbox-custom::before {
+            content: "";
+            width: 0.85em;
+            height: 0.85em;
+            transform: scale(0);
+            transition: 120ms transform ease-in-out;
+            box-shadow: inset 1em 1em white;
+            background-color: white;
+            transform-origin: center;
+            clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+        }
+        .checkbox-custom:checked {
+            background-color: #3b82f6;
+            border-color: #3b82f6;
+        }
+        .checkbox-custom:checked::before {
+            transform: scale(1);
+        }
+        .task-card {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .task-card:active {
+            transform: scale(0.98);
+        }
+        /* Smooth progress bar */
+        #progress-fill {
+            transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center pb-24">
+
+    <header class="w-full max-w-2xl bg-white shadow-sm sticky top-0 z-10 px-4 py-4 rounded-b-2xl mb-6">
+        <div class="flex justify-between items-center mb-3">
+            <div>
+                <h1 class="text-xl font-bold text-gray-800">Routine Tracker</h1>
+                <p id="current-date-display" class="text-sm text-gray-500 font-medium"></p>
+            </div>
+            <div class="text-right">
+                <span id="progress-text" class="text-lg font-bold text-blue-600">0%</span>
+                <p id="auth-status" class="text-xs text-gray-400">Connecting...</p>
+            </div>
+        </div>
+        <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+            <div id="progress-fill" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+        </div>
+    </header>
+
+    <main id="tasks-container" class="w-full max-w-2xl px-4 space-y-4">
+        <!-- Tasks will be injected here by JS -->
+        <div class="text-center text-gray-500 py-10">
+            <i class="fas fa-spinner fa-spin text-3xl mb-3"></i>
+            <p>Loading your routine...</p>
+        </div>
+    </main>
+
+    <div class="fixed bottom-0 w-full max-w-2xl bg-white shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] p-4 rounded-t-3xl z-20">
+        <button id="generate-report-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg transition duration-200 flex items-center justify-center gap-2 text-lg disabled:opacity-50 disabled:cursor-not-allowed">
+            <i class="fas fa-clipboard-list"></i>
+            Generate Report
+        </button>
+    </div>
+
+    <!-- Custom Modal -->
+    <div id="custom-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center px-4 opacity-0 transition-opacity duration-300">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 transform scale-95 transition-transform duration-300" id="modal-content-box">
+            <div class="text-center mb-6">
+                <div id="modal-icon" class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100 mb-4">
+                    <i class="fas fa-check text-green-600 text-xl"></i>
+                </div>
+                <h3 class="text-lg leading-6 font-bold text-gray-900" id="modal-title">Success</h3>
+                <div class="mt-2">
+                    <p class="text-sm text-gray-500" id="modal-message">Your report has been copied to the clipboard.</p>
+                </div>
+                <div id="modal-textarea-container" class="mt-4 hidden">
+                     <textarea id="modal-fallback-textarea" class="w-full text-xs p-2 border rounded h-32" readonly></textarea>
+                </div>
+            </div>
+            <button id="close-modal-btn" class="w-full inline-flex justify-center rounded-xl border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:text-sm transition-colors">
+                Got it, thanks!
+            </button>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const SCHEDULE_TEMPLATE = [
+            { id: "task_1", time: "07:30 AM", title: "Wake Up & Brisk Walk", icon: "fa-person-walking", color: "text-green-500" },
+            { id: "task_2", time: "08:30 AM", title: "Shower & Pooja", icon: "fa-om", color: "text-orange-500" },
+            { id: "task_3", time: "09:00 AM", title: "Morning Meeting", icon: "fa-users", color: "text-blue-500" },
+            { id: "task_4", time: "09:30 AM", title: "Deep Work Block 1", icon: "fa-laptop-code", color: "text-purple-500" },
+            { id: "task_5", time: "10:30 AM", title: "Healthy Breakfast", icon: "fa-mug-hot", color: "text-yellow-600" },
+            { id: "task_6", time: "11:00 AM", title: "Deep Work Block 2", icon: "fa-code", color: "text-purple-600" },
+            { id: "task_7", time: "01:30 PM", title: "Healthy Lunch", icon: "fa-bowl-food", color: "text-yellow-700" },
+            { id: "task_8", time: "02:30 PM", title: "Admin & Code Review", icon: "fa-list-check", color: "text-gray-600" },
+            { id: "task_9", time: "04:30 PM", title: "AI/ML Upskilling", icon: "fa-brain", color: "text-pink-500" },
+            { id: "task_10", time: "05:30 PM", title: "Evening Workout", icon: "fa-dumbbell", color: "text-red-500" },
+            { id: "task_11", time: "07:00 PM", title: "Light Dinner", icon: "fa-utensils", color: "text-orange-600" },
+            { id: "task_12", time: "08:00 PM", title: "Guilt-Free Leisure (PS5/TV)", icon: "fa-gamepad", color: "text-indigo-500" },
+            { id: "task_13", time: "10:30 PM", title: "Wind Down (No Screens)", icon: "fa-book", color: "text-teal-600" },
+            { id: "task_14", time: "11:30 PM", title: "Sleep", icon: "fa-bed", color: "text-blue-800" }
+        ];
+
+        let appState = {}; // Will hold { completed: boolean, note: string } for each task ID
+        let currentUserId = null;
+        let db = null;
+        let todayString = getLocalYYYYMMDD();
+        let isDataLoaded = false;
+        let noteUpdateTimeout = null;
+
+        // Initialize state with default structure
+        SCHEDULE_TEMPLATE.forEach(task => {
+            appState[task.id] = { completed: false, note: "" };
+        });
+
+        function getLocalYYYYMMDD() {
+            const d = new Date();
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        // Display current date
+        const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+        document.getElementById('current-date-display').innerText = new Date().toLocaleDateString('en-US', options);
+
+        async function initApp() {
+            try {
+                // Environment variables provided by system
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'daily-routine-tracker';
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+                if (!firebaseConfig) {
+                    console.warn("No Firebase config found. Running in offline/mock mode.");
+                    renderTasks();
+                    document.getElementById('auth-status').innerText = "Offline Mode";
+                    return;
+                }
+
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                const auth = getAuth(app);
+
+                // Authentication Protocol
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                currentUserId = auth.currentUser.uid;
+                document.getElementById('auth-status').innerText = "Synced ☁️";
+                document.getElementById('auth-status').classList.replace('text-gray-400', 'text-green-500');
+
+                loadDailyData(appId, currentUserId);
+
+            } catch (error) {
+                console.error("Initialization error:", error);
+                document.getElementById('auth-status').innerText = "Sync Failed";
+                document.getElementById('auth-status').classList.replace('text-gray-400', 'text-red-500');
+                renderTasks(); // Render anyway so user can use it locally
+            }
+        }
+
+        function loadDailyData(appId, userId) {
+            // STRICT PATH RULE COMPLIANCE: /artifacts/{appId}/users/{userId}/{collectionName}/{docId}
+            const docRef = doc(db, 'artifacts', appId, 'users', userId, 'daily_routines', todayString);
+
+            // Fetch data with real-time listener and mandatory error callback
+            onSnapshot(docRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    // Merge remote data into local state
+                    if (data.tasks) {
+                        Object.keys(appState).forEach(taskId => {
+                            if (data.tasks[taskId]) {
+                                appState[taskId].completed = !!data.tasks[taskId].completed;
+                                appState[taskId].note = data.tasks[taskId].note || "";
+                            }
+                        });
+                    }
+                } else {
+                    // If document doesn't exist yet, we just stick with our default empty appState
+                }
+                
+                isDataLoaded = true;
+                renderTasks();
+                updateProgress();
+            }, (error) => {
+                console.error("Firestore sync error:", error);
+                showModal("Sync Error", "Could not connect to database. Try refreshing.", false);
+            });
+        }
+
+        async function saveToCloud() {
+            if (!currentUserId || !db) return; // Guard clause
+
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'daily-routine-tracker';
+            const docRef = doc(db, 'artifacts', appId, 'users', currentUserId, 'daily_routines', todayString);
+            
+            try {
+                document.getElementById('auth-status').innerText = "Saving...";
+                await setDoc(docRef, { 
+                    date: todayString,
+                    tasks: appState,
+                    lastUpdated: new Date().toISOString()
+                }, { merge: true });
+                document.getElementById('auth-status').innerText = "Synced ☁️";
+            } catch (error) {
+                console.error("Error saving data:", error);
+                document.getElementById('auth-status').innerText = "Error Saving";
+            }
+        }
+
+        function renderTasks() {
+            const container = document.getElementById('tasks-container');
+            container.innerHTML = ''; // Clear loading state
+
+            SCHEDULE_TEMPLATE.forEach((task, index) => {
+                const state = appState[task.id];
+                
+                const card = document.createElement('div');
+                card.className = `task-card bg-white p-4 rounded-2xl shadow-sm border ${state.completed ? 'border-blue-200 bg-blue-50/30' : 'border-gray-100'}`;
+                
+                card.innerHTML = `
+                    <div class="flex items-start gap-4">
+                        <div class="pt-1">
+                            <input type="checkbox" id="check_${task.id}" class="checkbox-custom" ${state.completed ? 'checked' : ''}>
+                        </div>
+                        <div class="flex-1">
+                            <div class="flex items-center gap-2 mb-1">
+                                <i class="fas ${task.icon} ${task.color} text-sm"></i>
+                                <span class="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">${task.time}</span>
+                            </div>
+                            <label for="check_${task.id}" class="text-lg font-semibold cursor-pointer select-none ${state.completed ? 'text-gray-400 line-through' : 'text-gray-800'}">${task.title}</label>
+                            
+                            <div class="mt-3">
+                                <textarea id="note_${task.id}" placeholder="Add a note (e.g. 'Walked 15 mins' or 'Worked on API')" 
+                                class="w-full text-sm bg-gray-50 border border-gray-200 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none transition-colors ${state.completed ? 'opacity-70' : ''}" 
+                                rows="1">${state.note}</textarea>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+
+                // Event Listeners
+                const checkbox = document.getElementById(`check_${task.id}`);
+                const noteInput = document.getElementById(`note_${task.id}`);
+                const label = card.querySelector('label');
+
+                // Checkbox toggle
+                checkbox.addEventListener('change', (e) => {
+                    appState[task.id].completed = e.target.checked;
+                    
+                    // Visual updates immediately for better UX
+                    if(e.target.checked) {
+                        card.classList.add('border-blue-200', 'bg-blue-50/30');
+                        card.classList.remove('border-gray-100');
+                        label.classList.add('text-gray-400', 'line-through');
+                        label.classList.remove('text-gray-800');
+                        noteInput.classList.add('opacity-70');
+                    } else {
+                        card.classList.remove('border-blue-200', 'bg-blue-50/30');
+                        card.classList.add('border-gray-100');
+                        label.classList.remove('text-gray-400', 'line-through');
+                        label.classList.add('text-gray-800');
+                        noteInput.classList.remove('opacity-70');
+                    }
+                    
+                    updateProgress();
+                    saveToCloud();
+                });
+
+                // Note input with auto-resize and debounce
+                noteInput.addEventListener('input', (e) => {
+                    // Auto-resize
+                    e.target.style.height = 'auto';
+                    e.target.style.height = (e.target.scrollHeight) + 'px';
+                    
+                    appState[task.id].note = e.target.value;
+                    
+                    // Debounce cloud save so we don't spam Firestore
+                    clearTimeout(noteUpdateTimeout);
+                    document.getElementById('auth-status').innerText = "Typing...";
+                    noteUpdateTimeout = setTimeout(() => {
+                        saveToCloud();
+                    }, 1000);
+                });
+                
+                // Trigger resize initially if there's content
+                if (state.note) {
+                     setTimeout(() => {
+                        noteInput.style.height = 'auto';
+                        noteInput.style.height = (noteInput.scrollHeight) + 'px';
+                     }, 10);
+                }
+            });
+        }
+
+        function updateProgress() {
+            const total = SCHEDULE_TEMPLATE.length;
+            let completed = 0;
+            
+            SCHEDULE_TEMPLATE.forEach(task => {
+                if (appState[task.id].completed) completed++;
+            });
+
+            const percentage = Math.round((completed / total) * 100);
+            
+            document.getElementById('progress-fill').style.width = `${percentage}%`;
+            document.getElementById('progress-text').innerText = `${percentage}%`;
+            
+            if (percentage === 100) {
+                document.getElementById('progress-text').classList.replace('text-blue-600', 'text-green-600');
+                document.getElementById('progress-fill').classList.replace('bg-blue-600', 'bg-green-500');
+            } else {
+                document.getElementById('progress-text').classList.replace('text-green-600', 'text-blue-600');
+                document.getElementById('progress-fill').classList.replace('bg-green-500', 'bg-blue-600');
+            }
+        }
+
+        document.getElementById('generate-report-btn').addEventListener('click', generateReport);
+
+        function generateReport() {
+            let total = SCHEDULE_TEMPLATE.length;
+            let completed = 0;
+            
+            let reportText = `📊 *Daily Routine Report - ${todayString}*\n\n`;
+
+            SCHEDULE_TEMPLATE.forEach(task => {
+                const state = appState[task.id];
+                const status = state.completed ? "✅" : "❌";
+                if (state.completed) completed++;
+                
+                reportText += `${status} ${task.time} - ${task.title}\n`;
+                if (state.note.trim() !== "") {
+                    reportText += `   ↳ 📝 Note: ${state.note.trim()}\n`;
+                }
+            });
+
+            const percentage = Math.round((completed / total) * 100);
+            reportText += `\n*Completion:* ${completed}/${total} (${percentage}%)\n`;
+            
+            if (percentage > 80) {
+                reportText += "Awesome consistency today! 🔥";
+            } else if (percentage > 50) {
+                reportText += "Solid effort. Let's aim higher tomorrow. 💪";
+            } else {
+                reportText += "Tomorrow is a new day to reset. Keep pushing! 🔄";
+            }
+
+            copyToClipboard(reportText);
+        }
+
+        function copyToClipboard(text) {
+            // Using execCommand as requested/advised for iframe compat, wrapped with modern fallback logic
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            // Prevent scrolling to bottom
+            textArea.style.top = "0";
+            textArea.style.left = "0";
+            textArea.style.position = "fixed";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    showModal("Report Copied!", "Paste it into our chat to review your progress.", true);
+                } else {
+                    throw new Error("execCommand failed");
+                }
+            } catch (err) {
+                console.warn('Fallback to clipboard API or manual copy needed.', err);
+                // If execCommand fails, show the text so they can manually copy it
+                showModal("Could not auto-copy", "Please copy the text below manually.", false, text);
+            }
+            
+            document.body.removeChild(textArea);
+        }
+
+        function showModal(title, message, isSuccess, fallbackText = null) {
+            const modal = document.getElementById('custom-modal');
+            const modalBox = document.getElementById('modal-content-box');
+            
+            document.getElementById('modal-title').innerText = title;
+            document.getElementById('modal-message').innerText = message;
+            
+            const icon = document.getElementById('modal-icon');
+            if(isSuccess) {
+                icon.className = "mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100 mb-4";
+                icon.innerHTML = '<i class="fas fa-check text-green-600 text-xl"></i>';
+            } else {
+                icon.className = "mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-yellow-100 mb-4";
+                icon.innerHTML = '<i class="fas fa-exclamation text-yellow-600 text-xl"></i>';
+            }
+
+            const taContainer = document.getElementById('modal-textarea-container');
+            if (fallbackText) {
+                taContainer.classList.remove('hidden');
+                document.getElementById('modal-fallback-textarea').value = fallbackText;
+            } else {
+                taContainer.classList.add('hidden');
+            }
+
+            modal.classList.remove('hidden');
+            // Trigger reflow
+            void modal.offsetWidth;
+            
+            modal.classList.remove('opacity-0');
+            modalBox.classList.remove('scale-95');
+        }
+
+        document.getElementById('close-modal-btn').addEventListener('click', () => {
+            const modal = document.getElementById('custom-modal');
+            const modalBox = document.getElementById('modal-content-box');
+            
+            modal.classList.add('opacity-0');
+            modalBox.classList.add('scale-95');
+            
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300);
+        });
+
+        // Start App
+        initApp();
+
+    </script>
+</body>
+</html>
